@@ -36,7 +36,6 @@ function setup(block)
   % -----------------------------------------------------------------
   % Register methods called at run-time
   % -----------------------------------------------------------------
-  block.RegBlockMethod('Start', @Start);
   block.RegBlockMethod('Outputs', @Outputs);
 %   block.RegBlockMethod('Update', @Update);
 
@@ -77,39 +76,50 @@ function SetOutPortDataType(block, idx, dt)
 
     
 function DoPostPropSetup(block)
-  block.NumDworks = 1;
+  block.NumDworks = 2;
   
   block.Dwork(1).Name            = 'state';
-  block.Dwork(1).Dimensions      = 4;
+  block.Dwork(1).Dimensions      = 4*2000;
   block.Dwork(1).DatatypeID      = 0;      % double
   block.Dwork(1).Complexity      = 'Real'; % real
   block.Dwork(1).UsedAsDiscState = true;
+  
+  block.Dwork(2).Name            = 'time_called';
+  block.Dwork(2).Dimensions      = 1;
+  block.Dwork(2).DatatypeID      = 0;      % double
+  block.Dwork(2).Complexity      = 'Real'; % real
+  block.Dwork(2).UsedAsDiscState = true;
   
   % Register all tunable parameters as runtime parameters.
   block.AutoRegRuntimePrms;
 
 %endfunction
 
-function Start(block)
-
-  block.Dwork(1).Data = [];
-   
-%endfunction
 
 function Outputs(block)
+  block.Dwork(2).Data = block.Dwork(2).Data + 1;
+  i = block.Dwork(2).Data;
   state = block.Dwork(1).Data;
   x = block.InputPort(1).Data;
+  mat = 0;
   
-  if isempty(state)
-      state = x;
-  else 
-      state = [state;x];
+  if i <= 2000
+      idx = (i-1)*4 + 1;
+      state(idx:(idx+3)) = x;
+      block.Dwork(1).Data = state;
+      state_data = state(1:idx + 3);
+      mat = reshape(state_data,[4,i]);
+  else
+      state(1:1997) = state(4:2000);
+      state(1997:2000) = x;
+      block.Dwork(1).Data = state;
+      mat = reshape(state,[4,2000]);
   end
   
-  mat = reshape(4,length(state)/4);
+  u = mat(:,end);
+  u = u';
   
-  block.Dwork(1).Data = state;
-  block.OutputPort(1).Data = norm(mat);
+  block.OutputPort(1).Data = u*x;
   
 %endfunction
 
