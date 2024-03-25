@@ -83,7 +83,7 @@ function SetOutPortDataType(block, idx, dt)
 
     
 function DoPostPropSetup(block)
-  block.NumDworks = 3;
+  block.NumDworks = 7;
   
   block.Dwork(1).Name            = 'state';
   block.Dwork(1).Dimensions      = 4*2000;
@@ -103,6 +103,30 @@ function DoPostPropSetup(block)
   block.Dwork(3).Complexity      = 'Real'; % real
   block.Dwork(3).UsedAsDiscState = true;
   
+  block.Dwork(4).Name            = 'control';
+  block.Dwork(4).Dimensions      = 1;
+  block.Dwork(4).DatatypeID      = 0;      % double
+  block.Dwork(4).Complexity      = 'Real'; % real
+  block.Dwork(4).UsedAsDiscState = true;
+  
+  block.Dwork(5).Name            = 'xkp1';
+  block.Dwork(5).Dimensions      = 4;
+  block.Dwork(5).DatatypeID      = 0;      % double
+  block.Dwork(5).Complexity      = 'Real'; % real
+  block.Dwork(5).UsedAsDiscState = true;
+  
+  block.Dwork(6).Name            = 'Am';
+  block.Dwork(6).Dimensions      = 16;
+  block.Dwork(6).DatatypeID      = 0;      % double
+  block.Dwork(6).Complexity      = 'Real'; % real
+  block.Dwork(6).UsedAsDiscState = true;
+  
+  block.Dwork(7).Name            = 'P';
+  block.Dwork(7).Dimensions      = 16;
+  block.Dwork(7).DatatypeID      = 0;      % double
+  block.Dwork(7).Complexity      = 'Real'; % real
+  block.Dwork(7).UsedAsDiscState = true;
+  
   % Register all tunable parameters as runtime parameters.
   block.AutoRegRuntimePrms;
 
@@ -118,28 +142,66 @@ function Outputs(block)
   Q = diag([5 30 0 0]);
   R = 1;
   dt = 0.01;
+  disc_B = B*dt;
   
-  i = block.Dwork(2).Data;
+
   state = block.Dwork(1).Data;
   x = block.InputPort(1).Data;
+  
   if (block.InputPort(2).Data == 3)
+      block.Dwork(2).Data = block.Dwork(2).Data + 1;
+      i = block.Dwork(2).Data;
       idx = (i-1)*4 + 1;
+      state(idx:(idx+3)) = x;
+      block.Dwork(1).Data = state;    
       state_data = state(1:(idx + 3));
       mat = reshape(state_data,[4,i]);
       X = mat(:,1:i-1);
       Y = mat(:,2:end);
-      Am = Y*pinv(X);
       
-      sys = ss(zeros(4),B,eye(4),0);
-      dis_sys = c2d(sys,dt);
-      disc_B = dis_sys.B;
+      xkp1 = Y(:,end);
+      block.Dwork(5).data = xkp1;
+      
+      Am = Y*pinv(X);
+      block.Dwork(6).data = reshape(Am,[16,1]);
+      P = inv(X*X');
+      block.Dwork(7).data = reshape(P,[16,1]);
+      
       K = dlqr(Am,disc_B,Q,R);
       block.Dwork(3).Data = K;
-      block.OutputPort(1).Data = -K*x;
+      
+      u = -K*x;
+      block.Dwork(4).data = u;
+      block.OutputPort(1).Data = u;
   elseif (block.InputPort(2).Data > 3)
-      gain = block.Dwork(3).Data;
-      gain = reshape(gain,[1,4]);
-      block.OutputPort(1).Data = -gain*x;
+      xkp1 = block.Dwork(5).Data;
+      xkp1 = reshape(xkp1,[4,1]);
+      
+      P = block.Dwork(7).Data;
+      P = reshape(P,[4,4]);
+      
+      gamma = 1/(1 + xkp1'*P*xkp1);
+      
+      uk = block.Dwork(4).data;
+      ykp1 = x - disc_B*uk;
+      
+      At = block.Dwork(6).Data;
+      At = reshape(At,[4,4]);
+      At = At + gamma*(ykp1 - At*xkp1)*xkp1'*P;
+      
+      P = P - gamma*P*(xkp1*xkp1')*P;
+      K = dlqr(At, disc_B,Q,R);
+      
+      xkp1 = x;
+      block.Dwork(5).Data = xkp1;
+      block.Dwork(6).data = reshape(At,[16,1]);
+      block.Dwork(7).data = reshape(P,[16,1]);
+      block.Dwork(3).Data = K;
+      
+      u = -K*x;
+      block.Dwork(4).data = u;
+      
+      block.OutputPort(1).Data = u;
   end
   
 %endfunction
