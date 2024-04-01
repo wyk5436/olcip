@@ -1,6 +1,39 @@
 function online_learning_S(block)
 
-setup(block);
+    setup(block);
+
+function [Am,P,xkp1] = init_dmd(data)
+    i = length(data);
+    X = data(:,1:i-1);
+    Y = data(:,2:end);
+    
+    xkp1 = Y(:,end);
+    Am = Y*pinv(X);
+    P = inv(X*X');
+
+function [At,Pt,xkp1t] = online_dmd_update(A,P,xkp1,x,uk) 
+    %{
+    A: A matrix at the previous time step
+    xkp1: x_{k+1} paramete for online DMD.
+    P: P matrix at the previous time step   
+    uk: the control at the previous step.
+    x: The state at this time step, resulting from uk
+    %}
+
+    K1 = 0.2065;
+    J = 0.0076;
+    l = 0.337;
+    r = 0.216;
+    B = [0; 0; K1/J;-r*K1/(J*l)];
+    dt = 0.01;
+    disc_B = B*dt;
+
+    gamma = 1/(1 + xkp1'*P*xkp1);
+    ykp1 = x - disc_B*uk;
+    
+    At = A + gamma*(ykp1 - A*xkp1)*xkp1'*P;
+    Pt = P - gamma*P*(xkp1*xkp1')*P;
+    xkp1t = x;
   
 function setup(block)
 
@@ -27,63 +60,19 @@ function setup(block)
   block.OutputPort(1).SamplingMode = 'Sample';
   block.OutputPort(1).Dimensions   = 1;
 
-  block.SampleTimes = [-1 0];
+  block.SampleTimes = [0.01 0];
   block.OperatingPointCompliance = 'Default';
   
-  block.RegBlockMethod('SetInputPortSamplingMode', @SetInpPortFrameData);
-  block.RegBlockMethod('SetInputPortDimensions', @SetInpPortDims);
-  block.RegBlockMethod('SetOutputPortDimensions', @SetOutPortDims);
-  block.RegBlockMethod('SetInputPortDataType', @SetInpPortDataType);
-  block.RegBlockMethod('SetOutputPortDataType', @SetOutPortDataType);
   block.RegBlockMethod('PostPropagationSetup', @DoPostPropSetup);
-
-  % -----------------------------------------------------------------
-  % Register methods called at run-time
-  % -----------------------------------------------------------------
-  
-  block.RegBlockMethod('Outputs', @Outputs);
+  block.RegBlockMethod('Start', @Start);
   block.RegBlockMethod('Update', @Update);
-  
-
-
-function SetInpPortFrameData(block, idx, fd)
-  
-  block.InputPort(idx).SamplingMode = fd;
-  block.OutputPort(1).SamplingMode  = fd;
-  
+  block.RegBlockMethod('Outputs', @Outputs);
+ 
 %endfunction
-
-function SetInpPortDims(block, idx, di)
-  
-  block.InputPort(idx).Dimensions = di;
-  block.OutputPort(1).Dimensions  = di;
-
-%endfunction
-
-function SetOutPortDims(block, idx, di)
-  
-  block.OutputPort(idx).Dimensions = di;
-  block.InputPort(1).Dimensions    = di;
-
-%endfunction
-
-function SetInpPortDataType(block, idx, dt)
-  
-  block.InputPort(idx).DataTypeID = dt;
-  block.OutputPort(1).DataTypeID  = dt;
-
-%endfunction
-  
-function SetOutPortDataType(block, idx, dt)
-
-  block.OutputPort(idx).DataTypeID  = dt;
-  block.InputPort(1).DataTypeID     = dt;
-
-%endfunction  
 
     
 function DoPostPropSetup(block)
-  block.NumDworks = 7;
+  block.NumDworks = 8;
   
   block.Dwork(1).Name            = 'state';
   block.Dwork(1).Dimensions      = 4*2000;
@@ -126,14 +115,25 @@ function DoPostPropSetup(block)
   block.Dwork(7).DatatypeID      = 0;      % double
   block.Dwork(7).Complexity      = 'Real'; % real
   block.Dwork(7).UsedAsDiscState = true;
+
+  block.Dwork(8).Name            = 'flag';
+  block.Dwork(8).Dimensions      = 1;
+  block.Dwork(8).DatatypeID      = 0;      % double
+  block.Dwork(8).Complexity      = 'Real'; % real
+  block.Dwork(8).UsedAsDiscState = true;
   
   % Register all tunable parameters as runtime parameters.
   block.AutoRegRuntimePrms;
 
 %endfunction
 
+function Start(block)
+  block.Dwork(4).Data = 0;
+  block.Dwork(8).Data = 0;
 
-function Outputs(block)
+%endfunction
+
+function Update(block)
   K1 = 0.2065;
   J = 0.0076;
   l = 0.337;
@@ -144,11 +144,31 @@ function Outputs(block)
   dt = 0.01;
   disc_B = B*dt;
   
-
   state = block.Dwork(1).Data;
   x = block.InputPort(1).Data;
-  
-  if (block.InputPort(2).Data == 3)
+
+  if (block.InputPort(2).Data > 2) && (block.InputPort(2).Data < 3) % learning
+      block.Dwork(2).Data = block.Dwork(2).Data + 1;
+      i = block.Dwork(2).Data;
+
+      if i == 99 % end of learning period
+          block.Dwork(8).Data = block.Dwork(8).Data + 1; % setting flag for control
+      end
+
+      if i <= 2000
+          idx = (i-1)*4 + 1;
+          state(idx:(idx+3)) = x;
+          block.Dwork(1).Data = state;
+      else
+          state(1:1997) = state(4:2000);
+          state(1997:2000) = x;
+          block.Dwork(1).Data = state;
+      end
+  end
+
+  if (block.Dwork(8).Data == 1)
+      block.Dwork(8).Data = block.Dwork(8).Data + 1;
+
       block.Dwork(2).Data = block.Dwork(2).Data + 1;
       i = block.Dwork(2).Data;
       idx = (i-1)*4 + 1;
@@ -156,74 +176,48 @@ function Outputs(block)
       block.Dwork(1).Data = state;    
       state_data = state(1:(idx + 3));
       mat = reshape(state_data,[4,i]);
-      X = mat(:,1:i-1);
-      Y = mat(:,2:end);
-      
-      xkp1 = Y(:,end);
+      [Am,P,xkp1] = init_dmd(mat);
+
+      K = dlqr(Am,disc_B,Q,R);
+      u = -K*x;
+
+      block.Dwork(3).Data = K;
+      block.Dwork(4).data = u;
       block.Dwork(5).data = xkp1;
-      
-      Am = Y*pinv(X);
       block.Dwork(6).data = reshape(Am,[16,1]);
-      P = inv(X*X');
       block.Dwork(7).data = reshape(P,[16,1]);
       
-      K = dlqr(Am,disc_B,Q,R);
-      block.Dwork(3).Data = K;
-      
-      u = -K*x;
-      block.Dwork(4).data = u;
-      block.OutputPort(1).Data = u;
-  elseif (block.InputPort(2).Data > 3)
+
+  elseif (block.Dwork(8).Data > 1)
       xkp1 = block.Dwork(5).Data;
       xkp1 = reshape(xkp1,[4,1]);
-      
+
       P = block.Dwork(7).Data;
       P = reshape(P,[4,4]);
-      
-      gamma = 1/(1 + xkp1'*P*xkp1);
-      
+
+      A = block.Dwork(6).Data;
+      A = reshape(A,[4,4]);
+
       uk = block.Dwork(4).data;
-      ykp1 = x - disc_B*uk;
-      
-      At = block.Dwork(6).Data;
-      At = reshape(At,[4,4]);
-      At = At + gamma*(ykp1 - At*xkp1)*xkp1'*P;
-      
-      P = P - gamma*P*(xkp1*xkp1')*P;
+
+      [At,Pt,xkp1t] = online_dmd_update(A,P,xkp1,x,uk);
+ 
       K = dlqr(At, disc_B,Q,R);
-      
-      xkp1 = x;
-      block.Dwork(5).Data = xkp1;
-      block.Dwork(6).data = reshape(At,[16,1]);
-      block.Dwork(7).data = reshape(P,[16,1]);
-      block.Dwork(3).Data = K;
-      
       u = -K*x;
+
+      block.Dwork(3).Data = K;
       block.Dwork(4).data = u;
-      
-      block.OutputPort(1).Data = u;
+      block.Dwork(5).Data = xkp1t;
+      block.Dwork(6).data = reshape(At,[16,1]);
+      block.Dwork(7).data = reshape(Pt,[16,1]);
   end
   
 %endfunction
 
-function Update(block)
-  if (block.InputPort(2).Data > 2) && (block.InputPort(2).Data < 3)
-      block.Dwork(2).Data = block.Dwork(2).Data + 1;
-      i = block.Dwork(2).Data;
-      state = block.Dwork(1).Data;
-      x = block.InputPort(1).Data;
 
-      if i <= 2000
-          idx = (i-1)*4 + 1;
-          state(idx:(idx+3)) = x;
-          block.Dwork(1).Data = state;
-          state_data = state(1:idx + 3);
-      else
-          state(1:1997) = state(4:2000);
-          state(1997:2000) = x;
-          block.Dwork(1).Data = state;
-      end
-  end
-  
+function Outputs(block)
+  u = block.Dwork(4).data;
+  block.OutputPort(1).Data = u;
+
 %endfunction
 
