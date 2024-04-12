@@ -18,8 +18,8 @@ full_state = zeros(4,n_observe + 1);
 full_state(:,1) = x0;
 
 m = 0.114; % kg
-l = 0.33; % m
-r = 0.22; % m
+l = 0.337; % m
+r = 0.216; % m
 K1 = 0.2065;
 K2 = 0.1105;
 J = 0.0076;
