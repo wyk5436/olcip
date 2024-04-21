@@ -45,11 +45,14 @@ std = 0.01;
 full_state_noize = full_state + randn(size(full_state))*std;
 
 DMD_err = zeros(1,n_observe);
+DMD_err_cor = zeros(1,n_observe);
 for i = 1:n_observe
     X = full_state_noize(:,1:i);
     Y = full_state_noize(:,2:i+1);
     At = Y*pinv(X);
+    At_cor = At + At*i*std^2*inv(X*X');
     DMD_err(i) = norm(At-disc_A)/norm(disc_A);
+    DMD_err_cor(i) = norm(At_cor-disc_A)/norm(disc_A);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -114,6 +117,7 @@ theta = all_state(2,:);
 theta_acc = all_state_acc(2,:);
 
 total_err = [inf DMD_err A_err(2:end)];
+err_cor = [inf DMD_err_cor A_err(2:end)];
 
 figure;
 plot(t,theta,t,theta_acc);
@@ -123,9 +127,10 @@ ylabel('\theta');
 legend("Learned A", "Accurate A")
 
 figure;
-plot(t(10:end),total_err(10:end),t(10:end),all_state(:,10:end));
+plot(t(15:end),total_err(15:end),t(15:end),err_cor(15:end));
 xlabel("time");
 ylabel('percentage error');
+legend("Original", "Correction applied")
 
 
 function [Am,P,xkp1] = init_dmd(data)
