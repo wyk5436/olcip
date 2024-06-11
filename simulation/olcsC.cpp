@@ -1,11 +1,11 @@
 #include "C:/Users/controls/Documents/MATLAB/Spring24/eigen-3.4.0/Eigen/Dense"
 #include "C:/Users/controls/Documents/MATLAB/Spring24/eigen-3.4.0/unsupported/Eigen/MatrixFunctions"
 extern "C" {
-#define S_FUNCTION_NAME CS.cpp
+#define S_FUNCTION_NAME olcsC
 #define S_FUNCTION_LEVEL 2
 
 #include "simstruc.h"
-
+#include <string>
 
 static void init_dmd(Eigen::MatrixXd data, Eigen::MatrixXd& Am, Eigen::MatrixXd& P, Eigen::VectorXd& xkp1) {
     int numCols = data.cols();
@@ -16,7 +16,7 @@ static void init_dmd(Eigen::MatrixXd data, Eigen::MatrixXd& Am, Eigen::MatrixXd&
         xkp1(k) = data(k,numCols - 1);
     }
     
-    Am = Y * (X*X.transpose()*(X*X.transpose()).inverse());
+    Am = Y * (X.transpose()*(X*X.transpose()).inverse());
     P = (X*X.transpose()).inverse();
 }
 
@@ -39,7 +39,7 @@ static void online_dmd_update(Eigen::MatrixXd& Am, Eigen::MatrixXd& P, Eigen::Ve
 }
 
 Eigen::MatrixXd dlqr(Eigen::MatrixXd A, Eigen::MatrixXd B, Eigen::MatrixXd Q, Eigen::MatrixXd R, double tol) {
-    double diff = 9999;
+    double diff = 9999.0;
     Eigen::MatrixXd P = Q;
     Eigen::MatrixXd PP;
     while (diff > tol) {
@@ -61,8 +61,6 @@ static void mdlInitializeSizes(SimStruct *S)
     if (!ssSetNumInputPorts(S, 2)) return;
     ssSetInputPortWidth(S, 0, 4);
     ssSetInputPortWidth(S, 1, 1);
-    ssSetInputPortRequiredContiguous(S, 0, 1);
-    ssSetInputPortRequiredContiguous(S, 1, 1);
     ssSetInputPortDirectFeedThrough(S, 0, 1);
     ssSetInputPortDirectFeedThrough(S, 1, 1);
     
@@ -84,7 +82,7 @@ static void mdlInitializeSizes(SimStruct *S)
     ssSetDWorkName(S, 0, "state");
     ssSetDWorkComplexSignal(S, 0, COMPLEX_NO);
     
-    ssSetDWorkDataType(S, 1, SS_UINT32);
+    ssSetDWorkDataType(S, 1, SS_DOUBLE);
     ssSetDWorkWidth(S, 1, 1);
     ssSetDWorkName(S, 1, "time_called");
     ssSetDWorkComplexSignal(S, 1, COMPLEX_NO);
@@ -114,7 +112,7 @@ static void mdlInitializeSizes(SimStruct *S)
     ssSetDWorkName(S, 6, "P");
     ssSetDWorkComplexSignal(S, 6, COMPLEX_NO);
     
-    ssSetDWorkDataType(S, 7, SS_UINT32);
+    ssSetDWorkDataType(S, 7, SS_DOUBLE);
     ssSetDWorkWidth(S, 7, 1);
     ssSetDWorkName(S, 7, "flag");
     ssSetDWorkComplexSignal(S, 7, COMPLEX_NO);
@@ -128,13 +126,16 @@ static void mdlInitializeSizes(SimStruct *S)
     ssSetOptions(S, SS_OPTION_EXCEPTION_FREE_CODE);
 }
 
-#define MDL_start
+#define MDL_START
 static void mdlStart(SimStruct *S) {
-    real_T *u = (real_T*) ssGetDWork(S, 3);
-    u = 0;
+    real_T *count = (real_T*) ssGetDWork(S, 1);
+    *count = 0;
     
-    boolean_T *flag = (boolean_T*) ssGetDWork(S, 7);
-    flag = 0; 
+    real_T *u = (real_T*) ssGetDWork(S, 3);
+    u[0] = 0.0;
+    
+    real_T *flag = (real_T*) ssGetDWork(S, 7);
+    *flag = 0;
 }
 
 
@@ -148,38 +149,41 @@ static void mdlUpdate(SimStruct *S, int_T tid)
     Eigen::VectorXd B(4);
     B << 0, 0, K1/J, -r*K1/(J*l);
     Eigen::MatrixXd Q(4,4);
-    Q << 5, 0, 0, 0,
-         0, 30, 0, 0,
+    Q << 5L, 0, 0, 0,
+         0, 30L, 0, 0,
          0, 0, 0, 0,
          0, 0, 0, 0;
     Eigen::MatrixXd R(1, 1);
-    R << 1;
-    double dt = 0.01;
+    R << 1L;
+    double dt = 0.01L;
     Eigen::MatrixXd disc_B = dt * B;
     
-    real_T            *statePtr   = static_cast<real_T*>(ssGetDWork(S, 0));
-    InputRealPtrsType xPtrs       = ssGetInputPortRealSignalPtrs(S,0);
-    InputRealPtrsType tPtrs       = ssGetInputPortRealSignalPtrs(S,1);
+    real_T        *statePtr   = static_cast<real_T*>(ssGetDWork(S, 0));
+    real_T        *countPtr   = (real_T*)ssGetDWork(S, 1);
+    real_T        *flagPtr    = (real_T*)ssGetDWork(S, 7);
+    InputRealPtrsType xPtrs   = ssGetInputPortRealSignalPtrs(S,0);
+    InputRealPtrsType tPtrs   = ssGetInputPortRealSignalPtrs(S,1);
     
-    double* flatArray = new double[4];
+     
+    Eigen::VectorXd vecx(4);
     for (int i = 0; i < 4; ++i) {
-        flatArray[i] = *(xPtrs[i]);
+        if (xPtrs[i] == nullptr) {
+            ssSetErrorStatus(S, "One of the input pointers is null");
+            return;
+        }
+        vecx(i) = static_cast<double>(*xPtrs[i]);
     }
-    Eigen::Map<Eigen::VectorXd> mappedvecx(flatArray, 4);
-    Eigen::VectorXd vecx = mappedvecx;
     
     if ((*tPtrs[0] > 2) && (*tPtrs[0] < 3)){ // learning
-        real_T *countPtr = (real_T*)ssGetDWork(S, 1);
-        *countPtr += 1;
+        *countPtr = *countPtr + 1;
         int i = *countPtr;
         
         if (i == 99){
-            real_T *flagPtr = (real_T*)ssGetDWork(S, 7);
-            *flagPtr += 1;
+            *flagPtr = *flagPtr + 1;
         }
 
         if (i <= 2000){
-            int idx = (i-1)*4 + 1;
+            int idx = (i-1)*4;
             for (int k = idx; k < idx + 4; k++){
                 statePtr[k] = *xPtrs[k - idx];
             }
@@ -197,36 +201,37 @@ static void mdlUpdate(SimStruct *S, int_T tid)
         }
     }
     
-    real_T* flagPtr = static_cast<real_T*>(ssGetDWork(S, 7));
     if (*flagPtr == 1) {
         *flagPtr = *flagPtr + 1;
-        
-        real_T* countPtr = static_cast<real_T*>(ssGetDWork(S, 1));
+
         *countPtr = *countPtr + 1;
         int i = *countPtr;
-        int idx = (i-1)*4 + 1;
+        int idx = (i-1)*4;
         for (int k = idx; k < idx + 4; k++){
             statePtr[k] = *xPtrs[k - idx];
         }
+        
         Eigen::VectorXd state_data(idx + 3);
         for (int i = 0; i < idx + 3; i++) {
             state_data(i) = statePtr[i];
         }
         Eigen::Map<Eigen::MatrixXd> mat(state_data.data(), 4, i);
-        
+            
         Eigen::MatrixXd Am(4,4);
         Eigen::MatrixXd P(4,4);
         Eigen::VectorXd xkp1(4);
         init_dmd(mat, Am, P, xkp1);
         Eigen::MatrixXd K = dlqr(Am,disc_B,Q,R,0.0001);
         Eigen::MatrixXd u = -K*vecx;
-        
+//         ssPrintf("control: %f\n", u(0));
+
         real_T* KPtr = static_cast<real_T*>(ssGetDWork(S, 2));
         for (int i = 0; i < 4; i++) {
             KPtr[i] = K(i);
         }
         real_T* uPtr = static_cast<real_T*>(ssGetDWork(S, 3));
         uPtr[0] = u(0);
+        
         real_T* xkp1Ptr = static_cast<real_T*>(ssGetDWork(S, 4));
         for (int i = 0; i < 4; i++) {
             xkp1Ptr[i] = xkp1(i);
@@ -241,13 +246,13 @@ static void mdlUpdate(SimStruct *S, int_T tid)
         }
     } else if (*flagPtr > 1) {
         real_T*    xkp1Ptr   = static_cast<real_T*>(ssGetDWork(S, 4));
-        Eigen::Map<Eigen::VectorXd> mappedxkp1(xkp1Ptr, 4);
+        Eigen::Map<Eigen::VectorXd> mappedxkp1(xkp1Ptr, 4, 1);
         
         real_T* PPtr = static_cast<real_T*>(ssGetDWork(S, 6));
-        Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::ColMajor>> mappedP(PPtr);
+        Eigen::Map<Eigen::MatrixXd> mappedP(PPtr, 4 ,4);
         
         real_T* AmPtr = static_cast<real_T*>(ssGetDWork(S, 5));
-        Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::ColMajor>> mappedAm(AmPtr);
+        Eigen::Map<Eigen::MatrixXd> mappedAm(AmPtr, 4, 4);
         
         real_T* uPtr = static_cast<real_T*>(ssGetDWork(S, 3));
         double uk = *uPtr;
@@ -281,7 +286,6 @@ static void mdlUpdate(SimStruct *S, int_T tid)
             PPtr[i] = P(i);
         }
     }
-    delete[] flatArray;
 }
 
 static void mdlOutputs(SimStruct *S, int_T tid)
