@@ -199,9 +199,7 @@ static void mdlUpdate(SimStruct *S, int_T tid)
                 statePtr[k] = *xPtrs[k - 1996];
             }
         }
-    }
-    
-    if (*flagPtr == 1) {
+    } else if (*flagPtr == 1) {
         *flagPtr = *flagPtr + 1;
 
         *countPtr = *countPtr + 1;
@@ -211,8 +209,8 @@ static void mdlUpdate(SimStruct *S, int_T tid)
             statePtr[k] = *xPtrs[k - idx];
         }
         
-        Eigen::VectorXd state_data(idx + 3);
-        for (int i = 0; i < idx + 3; i++) {
+        Eigen::VectorXd state_data(idx + 4);
+        for (int i = 0; i < idx + 4; i++) {
             state_data(i) = statePtr[i];
         }
         Eigen::Map<Eigen::MatrixXd> mat(state_data.data(), 4, i);
