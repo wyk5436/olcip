@@ -1,5 +1,7 @@
-#include "C:/Users/controls/Documents/MATLAB/Spring24/eigen-3.4.0/Eigen/Dense"
-#include "C:/Users/controls/Documents/MATLAB/Spring24/eigen-3.4.0/unsupported/Eigen/MatrixFunctions"
+#include <Eigen/Dense>
+#include <Eigen/MatrixFunctions>
+#include "dlqr_custom.h"
+
 extern "C" {
 #define S_FUNCTION_NAME olcsC
 #define S_FUNCTION_LEVEL 2
@@ -38,18 +40,6 @@ static void online_dmd_update(Eigen::MatrixXd& Am, Eigen::MatrixXd& P, Eigen::Ve
     xkp1 = x;
 }
 
-Eigen::MatrixXd dlqr(Eigen::MatrixXd A, Eigen::MatrixXd B, Eigen::MatrixXd Q, Eigen::MatrixXd R, double tol) {
-    double diff = 9999.0;
-    Eigen::MatrixXd P = Q;
-    Eigen::MatrixXd PP;
-    while (diff > tol) {
-        PP = A.transpose() * P * A - A.transpose() * P * B * (R + B.transpose() * P * B).inverse() * B.transpose() * P * A + Q;
-        diff = (P - PP).norm();
-        P = PP;
-    }
-    return (R + B.transpose() * P * B).inverse() * B.transpose() * P * A;
-}
-
 static void mdlInitializeSampleTimes(SimStruct *S) {
     ssSetSampleTime(S, 0, 0.01);
     ssSetOffsetTime(S, 0, 0.0);
@@ -57,15 +47,21 @@ static void mdlInitializeSampleTimes(SimStruct *S) {
 
 static void mdlInitializeSizes(SimStruct *S)
 {
-    ssSetNumSFcnParams(S, 0);  /* Number of expected parameters */
+    ssSetNumSFcnParams(S, 4);  // Number of expected parameters
+
+    if (ssGetNumSFcnParams(S) != ssGetSFcnParamsCount(S)) {
+        return; // Parameter mismatch will be reported by Simulink
+    }
+
     if (!ssSetNumInputPorts(S, 2)) return;
     ssSetInputPortWidth(S, 0, 4);
     ssSetInputPortWidth(S, 1, 1);
     ssSetInputPortDirectFeedThrough(S, 0, 1);
     ssSetInputPortDirectFeedThrough(S, 1, 1);
     
-    if (!ssSetNumOutputPorts(S, 1)) return;
+    if (!ssSetNumOutputPorts(S, 2)) return;
     ssSetOutputPortWidth(S, 0, 1);
+    ssSetOutputPortWidth(S, 1, 16);
     
     ssSetNumSampleTimes(S, 1);
     
@@ -142,17 +138,27 @@ static void mdlStart(SimStruct *S) {
 #define MDL_UPDATE
 static void mdlUpdate(SimStruct *S, int_T tid)
 {
+}
+
+static void mdlOutputs(SimStruct *S, int_T tid)
+{
     double K1 = 0.2065;
     double J = 0.0076;
     double l = 0.337;
     double r = 0.216;
     Eigen::VectorXd B(4);
     B << 0, 0, K1/J, -r*K1/(J*l);
+
+    real_T Q_1 = mxGetPr(ssGetSFcnParam(S, 0))[0];
+    real_T Q_2 = mxGetPr(ssGetSFcnParam(S, 1))[0];
+    real_T Q_3 = mxGetPr(ssGetSFcnParam(S, 2))[0];
+    real_T Q_4 = mxGetPr(ssGetSFcnParam(S, 3))[0];
+
     Eigen::MatrixXd Q(4,4);
-    Q << 5, 0, 0, 0,
-         0, 30, 0, 0,
-         0, 0, 0, 0,
-         0, 0, 0, 0;
+    Q << Q_1, 0, 0, 0,
+         0, Q_2, 0, 0,
+         0, 0, Q_3, 0,
+         0, 0, 0, Q_4;
     Eigen::MatrixXd R(1, 1);
     R << 1;
     double dt = 0.01;
@@ -219,7 +225,7 @@ static void mdlUpdate(SimStruct *S, int_T tid)
         Eigen::MatrixXd P(4,4);
         Eigen::VectorXd xkp1(4);
         init_dmd(mat, Am, P, xkp1);
-        Eigen::MatrixXd K = dlqr(Am,disc_B,Q,R,0.0001);
+        Eigen::MatrixXd K = dlqr(Am,disc_B,Q,R,0.0000000000001);
         Eigen::MatrixXd u = -K*vecx;
 
         real_T* KPtr = static_cast<real_T*>(ssGetDWork(S, 2));
@@ -260,7 +266,7 @@ static void mdlUpdate(SimStruct *S, int_T tid)
         Eigen::VectorXd x = mappedxkp1;
         online_dmd_update(Am, P, xkp1, vecx, uk);
         
-        Eigen::MatrixXd K = dlqr(Am,disc_B,Q,R,0.0001);
+        Eigen::MatrixXd K = dlqr(Am,disc_B,Q,R,1e-6);
         Eigen::MatrixXd u = -K*vecx;
         
         real_T* KPtr = static_cast<real_T*>(ssGetDWork(S, 2));
@@ -282,14 +288,18 @@ static void mdlUpdate(SimStruct *S, int_T tid)
             PPtr[i] = P(i);
         }
     }
-}
-
-static void mdlOutputs(SimStruct *S, int_T tid)
-{
+    
+    
     real_T* uPtr = static_cast<real_T*>(ssGetDWork(S, 3));
     double u = *uPtr;
     real_T *y = ssGetOutputPortRealSignal(S, 0);
     y[0] = u;
+    
+    real_T *yy = ssGetOutputPortRealSignal(S, 1);
+    real_T* AmPtr = static_cast<real_T*>(ssGetDWork(S, 5));
+    for (int i = 0; i < 16; i++) {
+        yy[i] = AmPtr[i];
+    }
 }
 
 static void mdlTerminate(SimStruct *S) {
